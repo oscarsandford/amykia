@@ -1,79 +1,33 @@
 use std::{
 	io::{Read, BufReader, Write},
 	net::TcpStream,
-	fs, thread, sync::{mpsc, Arc, Mutex}
+	fs,
 };
+
+pub mod net;
 
 const RECV_BUFFER_SIZE: usize = 1024;
 const PUBLIC_PFX: &str = "./public";
 const HTML404: &str = "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>Error 404</title></head><body><h1>404 NOT FOUND</h1></body></html>";
 
 
-struct Worker {
-	id: usize,
-	handle: thread::JoinHandle<()>,
-}
-impl Worker {
-	fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
-		// TODO: make this a std::thread::Builder spawn
-		let handle = thread::spawn(move || loop {
-			let job = receiver
-						.lock().expect("Failed to acquire mutex lock")
-						.recv().expect("Sender disconnected");
-			println!("Worker {id} : executing job.");
-			job();
-		});
-		Worker { id, handle }
-	}
-}
-
-type Job = Box<dyn Send + 'static + FnOnce()>;
-
-pub struct ThreadPool {
-	workers: Vec<Worker>,
-	sender: mpsc::Sender<Job>,
-}
-impl ThreadPool {
-	pub fn new(size: usize) -> ThreadPool {
-
-		let (sender, receiver) = mpsc::channel();
-		let receiver = Arc::new(Mutex::new(receiver));
-
-		let mut workers = Vec::with_capacity(size);
-		for i in 0..size {
-			workers.push(Worker::new(i, Arc::clone(&receiver)));
-		}
-		ThreadPool { workers, sender }
-	}
-
-	pub fn execute<F>(&self, f: F)
-	where 
-		F: Send + 'static + FnOnce()
-	{
-		let job = Box::new(f);
-		if let Err(e) = self.sender.send(job) {
-			eprintln!("Sending error: {e:?}");
-		}
-	}
-}
-
 // All resources can be returned in bytes form to send back.
 trait Resource {
-	fn get_bytes(&self) -> Vec<u8>;
+	fn get_html(&self) -> String;
 	fn get_path(&self) -> &str;
 	fn can_download(&self) -> bool;
 }
 
 struct File {
-	path: String,
+	path: String, // Should be &str, but we'll mess with this lifetime later.
+	html: String,
 	dl: bool, // Can download?
-	data: Vec<u8>, // the bytes data (figure out how to get this for each resource type)
 }
 
 impl Resource for File {
-	fn can_download(&self) -> bool { self.dl }
+	fn get_html(&self) -> String { String::from("<p>hello</p>") }
 	fn get_path(&self) -> &str { "" }
-	fn get_bytes(&self) -> Vec<u8> { vec![0] }
+	fn can_download(&self) -> bool { self.dl }
 }
 
 #[derive(Debug, PartialEq)]
@@ -99,18 +53,16 @@ fn parse(buf: &[u8]) -> Request  {
 	let route = first.next().unwrap_or_default();
 	let protocol = first.next().unwrap_or_default();
 	let accepts = lines.get(6).unwrap_or(&"")
-						.splitn(1, ':').next().unwrap_or(&"")
-						.split(',').collect::<Vec<&str>>();
+				.splitn(1, ':').next().unwrap_or(&"")
+				.split(',').collect::<Vec<&str>>();
 	// TODO: deal with bad requests
 	Request { method, route, protocol, accepts }
 }
 
 fn package(res: Response) -> Vec<u8> {
-	let res = format!("{} {} {}\r\nContent-Length: {}\r\n\r\n{}", 
+	format!("{} {} {}\r\nContent-Length: {}\r\n\r\n{}", 
 		res.protocol, res.code, res.status, res.content.len(), res.content)
-		.into_bytes();
-	println!("{:?}", String::from_utf8_lossy(&res));
-	res
+		.into_bytes()
 }
 
 fn handle(buf: &[u8]) -> Vec<u8> {
@@ -137,6 +89,7 @@ pub fn receive(mut stream: TcpStream) {
 	if let Err(e) = stream.write_all(&res) {
 		eprintln!("Socket write failed: {:?}", e);
 	}
+	// TODO: do we want a stream.flush() here?
 }
 
 #[cfg(test)]
