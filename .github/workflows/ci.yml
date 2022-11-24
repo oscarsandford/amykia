@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - 'feature-**'
+
+jobs:
+  amykia-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Amykia Test
+        run: cargo test --all
+
+      - name: Amykia Build
+        run: cargo build --release
