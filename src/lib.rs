@@ -29,45 +29,32 @@ impl From<std::str::Utf8Error> for AKErr<'_>  {
 
 
 // All resources can be returned in bytes form to send back.
-trait Resource {
-	fn get_html(&self) -> String;
-	fn get_path(&self) -> &str;
-	fn can_download(&self) -> bool;
-}
+// trait Resource {
+// 	fn get_html(&self) -> String;
+// 	fn get_path(&self) -> &str;
+// 	fn can_download(&self) -> bool;
+// }
 
-struct File {
-	path: String, // Should be &str, but we'll mess with this lifetime later.
-	html: String,
-	dl: bool, // Can download? (Maybe instead this field should be "can view")
-}
+// struct File {
+// 	path: String, // Should be &str, but we'll mess with this lifetime later.
+// 	html: String,
+// 	dl: bool, // Can download? (Maybe instead this field should be "can view")
+// }
 
-impl Resource for File {
-	fn get_html(&self) -> String { String::from("<p>hello</p>") }
-	fn get_path(&self) -> &str { "" }
-	fn can_download(&self) -> bool { self.dl }
-}
+// impl Resource for File {
+// 	fn get_html(&self) -> String { String::from("<p>hello</p>") }
+// 	fn get_path(&self) -> &str { "" }
+// 	fn can_download(&self) -> bool { self.dl }
+// }
 
 #[derive(Debug, PartialEq)]
 struct Request<'a> {
 	method: &'a str,
 	route: &'a str,
 	protocol: &'a str,
-	accept: Vec<&'a str>,
+	// accept: Vec<&'a str>,
 }
 
-struct Response<'a, 'b> {
-	protocol: &'a str,
-	code: u16,
-	status: &'b str,
-	content: Vec<u8>,
-}
-
-
-/// Return a simple HTML page for display an error code, status, and message.
-fn fmt_err_page(code: u16, status: &str, e: String) -> Vec<u8> {
-	format!("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>Error {code} {status}</title></head><h1>Error {code}: {status}</h1><body>{e}</body></html>")
-	.into_bytes().to_vec()
-}
 
 /// Parse a HTTP request header from a given bytes buffer `buf`.
 fn parse(buf: &[u8]) -> Result<Request, AKErr> {
@@ -77,45 +64,84 @@ fn parse(buf: &[u8]) -> Result<Request, AKErr> {
 	let method = first.next().ok_or(AKErr::HeaderError("HTTP method unretrievable"))?;
 	let route = first.next().ok_or(AKErr::HeaderError("HTTP route unretrievable"))?;
 	let protocol = first.next().ok_or(AKErr::HeaderError("HTTP protocol unretrievable"))?;
-	// TODO: Might not need the accept fields...
-	let accept = lines.iter()
-		.find(|l| l.starts_with("Accept: "))
-		.map(|l| &l[8..])
-		.unwrap_or(&"")
-		.split(',')
-		.collect();
-	Ok( Request { method, route, protocol, accept } )
+	Ok( Request { method, route, protocol } )
+}
+
+/// Return a simple HTML page for display a code, status, and message.
+fn err_html(
+	code: u16, 
+	status: &str, 
+	e: String
+) -> Vec<u8> {
+	format!("<html><head><title>{code} {status}</title></head><h1>{code} {status}</h1><body>{e}</body></html>")
+	.into_bytes()
+}
+
+/// Create a simple HTML page that serves as a graphical representation of the 
+/// directory `dir` with links to navigate to child files and other directories.
+fn dir_html(dir: &String) -> std::io::Result<Vec<u8>> {
+	let relpath = &dir[PUBLIC_PFX.len()..].trim_end_matches('/');
+	let mut html = format!("<html><head><title>{relpath}</title></head><h1>{relpath}</h1><body><ul>").into_bytes();
+	for entry in fs::read_dir(dir)? {
+		let entry = entry?;
+		let fname = entry.file_name();
+		let fname = fname.to_string_lossy();
+		// if entry.path().is_dir() { }
+		html.extend(&format!("<li><a href=\"{relpath}/{fname}\">{fname}<a></li>").into_bytes());
+	}
+	html.extend(b"</ul></body></html>");
+	Ok(html)
+}
+
+/// This function is called when there was an error reading the resource as a file.
+/// In this case, we try to construct a directory page based on the resource `path` 
+/// and package it. If still unsuccessful, we package a 404 page.
+fn package_directory<'a>(
+	protocol: &'a str, 
+	path: String
+) -> Vec<u8> {
+	match dir_html(&path) {
+		Ok(html) => package(protocol, 200, "OK", html),
+		Err(e) => package(protocol, 404, "NOT FOUND", err_html(404, "NOT FOUND", e.to_string())),
+	}
 }
 
 /// Join and return a response header and its content in a bytes vector.
-fn package(res: Response) -> Vec<u8> {
+fn package<'a, 'b>(
+	protocol: &'a str, 
+	code: u16, 
+	status: &'b str, 
+	content: Vec<u8>
+) -> Vec<u8> {
 	[format!("{} {} {}\r\nContent-Length: {}\r\n\r\n", 
-		res.protocol, res.code, res.status, res.content.len()).into_bytes(),
-	res.content].concat()
+		protocol, code, status, content.len()).into_bytes(),
+	content].concat()
+}
+
+/// Map the root resource to index.html, all other routes treated otherwise.
+/// Decode URL encoded spaces (%20) to ensure local file names match.
+fn resolve_route<'a>(
+	route: &'a str
+) -> String {
+	match route.replace("%20", " ").as_str() {
+		"/" => format!("{}{}", PUBLIC_PFX, "/index.html"),
+		route => format!("{}{}", PUBLIC_PFX, route),
+	}
 }
 
 /// Handle a given bytes buffer `buf` by parsing it. If successful, 
 /// determine a local resource from which to construct a response package.
 fn handle(buf: &[u8]) -> Vec<u8> {
 	match parse(&buf) {
-		Err(e) => package(Response { protocol: "HTTP/1.1", code: 400, status: "BAD REQUEST", content: fmt_err_page(400, "BAD REQUEST", e.to_string()) }),
 		Ok(req) => {
 			dbg!(&req);
-			let resource_path = match req.route {
-				"/" => format!("{}{}", PUBLIC_PFX, "/index.html"),
-				route => format!("{}{}", PUBLIC_PFX, route),
-			};
-			
-			// Read as bytes so that we can return downloadable media as well as HTML files.
-			// FYI: PDFs get embeded, but images get downloaded right away (not embeded).
-			match fs::read(resource_path) {
-				Ok(resource) => package(Response { protocol: "HTTP/1.1", code: 200, status: "OK", content: resource }),
-				Err(e) => {
-					eprintln!("404: {:?}", e);
-					package(Response { protocol: "HTTP/1.1", code: 404, status: "NOT FOUND", content: fmt_err_page(404, "NOT FOUND", e.to_string()) })
-				},
+			let path = resolve_route(req.route);
+			match fs::read(&path) {
+				Ok(resource) => package(req.protocol, 200, "OK", resource),
+				Err(_) => package_directory(req.protocol, path),
 			}
 		},
+		Err(e) => package("HTTP/1.1", 400, "BAD REQUEST", err_html(400, "BAD REQUEST", e.to_string())),
 	}
 }
 
@@ -135,6 +161,7 @@ pub fn receive(mut stream: TcpStream) {
 	}
 }
 
+
 #[cfg(test)]
 mod tests {
     use crate::*;
@@ -143,12 +170,17 @@ mod tests {
 	fn parse_simple_buffer() {
 		let buf = "GET / HTTP/1.1".as_bytes();
 		let req = parse(&buf).unwrap();
-		assert_eq!(req, Request { method: "GET", route: "/", protocol: "HTTP/1.1", accept: vec![""] });
+		assert_eq!(req, Request { method: "GET", route: "/", protocol: "HTTP/1.1" });
 	}
 
 	#[test]
 	fn parse_empty_buffer() {
 		let buf = "".as_bytes();
-		parse(&buf).expect_err("Success!");
+		parse(&buf).unwrap_err();
+	}
+
+	#[test]
+	fn handle_bad_dir() {
+		dir_html(&String::from("hello world")).unwrap_err();
 	}
 }
