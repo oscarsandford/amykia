@@ -12,7 +12,7 @@ fn main() {
 			.expect("Should be a valid address/port");
 	let pool = ThreadPool::new(NUM_WORKERS);
 	println!("~~> Amykia listening on {ADDRESS}:{PORT}");
-	for stream in listener.incoming().take(3) {
+	for stream in listener.incoming() {
 		if let Ok(stream) = stream {
 			pool.execute(|| {
 				receive(stream);
