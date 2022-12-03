@@ -1,0 +1,54 @@
+/* 
+This style sheet is purely for reference and modification.
+
+In order to make the choice of content directory more flexible, 
+the styles here are copied into the main program (cfg.rs) and 
+programmatically embedded directly in the HTML files. If we 
+didn't do this, we would have to place this style sheet in 
+every such directory.
+*/
+
+:root {
+  --primary: #8686f3;
+  --secondary: #61a051;
+  --light: #e5e5ee;
+  --dark: #423433;
+  --chalk: #f0f0f0;
+}
+
+body {
+  background-color: var(--dark);
+  color: var(--light);
+  font-family: "Lucida Console", "Courier New", monospace;
+  text-align: center;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.col {
+  flex-direction: column;
+}
+
+ul {
+  list-style-type: none;
+  display: inline-block;
+  text-align: left;
+}
+
+li {
+  padding: 4px;
+}
+
+a {
+  text-decoration: none;
+  color: var(--primary);
+}
+
+.dir {
+  color: var(--secondary);
+}
+
+.bg {
+  width: 70%;
+}

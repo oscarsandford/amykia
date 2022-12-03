@@ -8,7 +8,7 @@ fn main() {
 	let listener = std::net::TcpListener::bind(&cfg.addr)
 			.expect("Should be a valid address/port");
 	let pool = ThreadPool::new(cfg.workers);
-	println!("Amykia ~\n - Environment: {}\n - Address: {}\n - Workers: {}", 
+	println!("Amykia ~\n - Environment: {}\n - Address: http://{}\n - Workers: {}", 
 		if cfg!(debug_assertions) {"debug"} else {"release"}, cfg.addr, cfg.workers);
 	for stream in listener.incoming() {
 		if let Ok(stream) = stream {

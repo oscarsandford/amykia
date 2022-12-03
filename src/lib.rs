@@ -3,12 +3,11 @@ use std::{
 	net::TcpStream,
 	fs,
 };
+use crate::cfg::{RECV_BUFFER_SIZE, PUBLIC_PFX, STYLES};
 
 pub mod net;
 pub mod cfg;
 
-const RECV_BUFFER_SIZE: usize = 1024;
-const PUBLIC_PFX: &str = "./public";
 
 #[derive(Debug)]
 enum AKErr<'a> {
@@ -28,7 +27,7 @@ impl From<std::str::Utf8Error> for AKErr<'_>  {
 	fn from(e: std::str::Utf8Error) -> Self { Self::ParseError(e) }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 struct Request<'a> {
 	method: &'a str,
 	route: &'a str,
@@ -38,17 +37,24 @@ struct Request<'a> {
 
 /// Return simple HTML (in bytes) that serves as a graphical representation of the 
 /// directory `dir` with links to navigate to child files and other directories.
-fn dir_html(dir: &String) -> std::io::Result<Vec<u8>> {
-	let relpath = &dir[PUBLIC_PFX.len()..].trim_end_matches('/');
-	let mut html = format!("<html><head><title>{relpath}</title></head><h1>{relpath}</h1><body style=\"text-align:center;\"><ul style=\"display:inline-block;text-align:left;\">").into_bytes();
-	for entry in fs::read_dir(dir)? {
+fn dir_html(dir_path: &String) -> std::io::Result<Vec<u8>> {
+	// This is disgusting, but (should be) safe.
+	let relpath = if dir_path.len() >= PUBLIC_PFX.len() { dir_path[PUBLIC_PFX.len()..].trim_end_matches('/') } else {""};
+	let backpath = if relpath.len() > 0 {&relpath[..relpath.rfind('/').unwrap_or(relpath.len()-1)]} else {""};
+	let mut html = format!("<html><head><title>{relpath}</title><style>{STYLES}</style>\
+		</head><body><div class=\"col\"><h1>{relpath}</h1><ul><li><a class=\"dir\" href=\"{backpath}\">../<a></li>").into_bytes();
+	for entry in fs::read_dir(dir_path)? {
 		let entry = entry?;
 		let fname = entry.file_name();
 		let fname = fname.to_string_lossy();
-		// if entry.path().is_dir() { }
-		html.extend(&format!("<li><a href=\"{relpath}/{fname}\">{fname}<a></li>").into_bytes());
+		if entry.path().is_dir() { 
+			html.extend(&format!("<li><a class=\"dir\" href=\"{relpath}/{fname}\">{fname}/<a></li>").into_bytes());
+		}
+		else {
+			html.extend(&format!("<li><a href=\"{relpath}/{fname}\">{fname}<a></li>").into_bytes());
+		}
 	}
-	html.extend(b"</ul></body></html>");
+	html.extend(b"</ul></div></body></html>");
 	Ok(html)
 }
 
@@ -58,18 +64,18 @@ fn err_html(
 	status: &str, 
 	e: String
 ) -> Vec<u8> {
-	format!("<html><head><title>{code} {status}</title></head><h1>{code} {status}</h1><body>{e}</body></html>")
+	format!("<html><head><title>amykia</title><style>{STYLES}</style></head><body><div class=\"col\"><h1>{code} {status}</h1>{e}</div></body></html>")
 	.into_bytes()
 }
 
 /// This function is called when there was an error reading the resource as a file.
-/// In this case, we try to construct a directory page based on the resource `path` 
-/// and package it. If still unsuccessful, we package a 404 page.
+/// In this case, we try to construct a directory page based on the resource path 
+/// `dir` and package it. If still unsuccessful, we package a 404 page.
 fn package_directory<'a>(
 	protocol: &'a str, 
-	path: String
+	dir_path: String
 ) -> Vec<u8> {
-	match dir_html(&path) {
+	match dir_html(&dir_path) {
 		Ok(html) => package(protocol, 200, "OK", html),
 		Err(e) => package(protocol, 404, "NOT FOUND", err_html(404, "NOT FOUND", e.to_string())),
 	}
@@ -88,13 +94,15 @@ fn package<'a, 'b>(
 }
 
 /// Decode URL encoded spaces (`%20`) to ensure local file names match.
-/// Map the root resource (`/`) to index.html; all other routes treated as-is.
+/// Map the root resource (`/`) to `index.html`; all other routes treated as-is.
+/// This function ensures that the resulting path string will have a length 
+/// greater or equal to the length of the `PUBLIC_PFX`.
 fn resolve_route<'a>(
 	route: &'a str
 ) -> String {
 	match route.replace("%20", " ").as_str() {
-		"/" => format!("{}{}", PUBLIC_PFX, "/index.html"),
-		route => format!("{}{}", PUBLIC_PFX, route),
+		"/" => format!("{PUBLIC_PFX}/index.html"),
+		route => format!("{PUBLIC_PFX}{route}"),
 	}
 }
 
@@ -106,7 +114,11 @@ fn parse(buf: &[u8]) -> Result<Request, AKErr> {
 	let method = first.next().ok_or(AKErr::HeaderError("HTTP method unretrievable"))?;
 	let route = first.next().ok_or(AKErr::HeaderError("HTTP route unretrievable"))?;
 	let protocol = first.next().ok_or(AKErr::HeaderError("HTTP protocol unretrievable"))?;
-	Ok( Request { method, route, protocol } )
+	let req = Request { method, route, protocol };
+	if req.method != "GET" {
+		Err(AKErr::HeaderError("Only GET method is currently supported"))
+	}
+	else { Ok(req) }
 }
 
 /// Parse a buffer `buf`. If successful, determine a local resource from 
@@ -143,24 +155,54 @@ pub fn handle(mut stream: TcpStream) {
 
 
 #[cfg(test)]
-mod tests {
+mod parsing {
     use crate::*;
 
 	#[test]
-	fn parse_simple_buffer() {
+	fn simple_get() {
 		let buf = "GET / HTTP/1.1".as_bytes();
 		let req = parse(&buf).unwrap();
-		assert_eq!(req, Request { method: "GET", route: "/", protocol: "HTTP/1.1" });
+		assert_eq!(req.method, "GET");
+		assert_eq!(req.route, "/");
+		assert_eq!(req.protocol, "HTTP/1.1");
 	}
 
 	#[test]
-	fn parse_empty_buffer() {
-		let buf = "".as_bytes();
+	fn simple_post() {
+		let buf = "POST / HTTP/1.1".as_bytes();
 		parse(&buf).unwrap_err();
 	}
 
 	#[test]
-	fn handle_bad_dir() {
-		dir_html(&String::from("hello world")).unwrap_err();
+	fn empty_buffer() {
+		let buf = "".as_bytes();
+		parse(&buf).unwrap_err();
+	}
+}
+
+#[cfg(test)]
+mod resolving {
+	use crate::*;
+
+	#[test]
+	fn route_resolver() {
+		assert_eq!(resolve_route("/"), format!("{PUBLIC_PFX}/index.html"));
+		assert_eq!(resolve_route("/asdf"), format!("{PUBLIC_PFX}/asdf"));
+		assert_eq!(resolve_route("/jjtk//test"), format!("{PUBLIC_PFX}/jjtk//test"));
+	}
+
+	#[test]
+	fn invalid_dirs() {
+		dir_html(&"".to_string()).unwrap_err();
+		dir_html(&" ".to_string()).unwrap_err();
+		dir_html(&" ".repeat(PUBLIC_PFX.len())).unwrap_err();
+		dir_html(&"...".to_string()).unwrap_err();
+	}
+
+	#[test]
+	fn valid_dirs() {
+		dir_html(&".".to_string()).unwrap();
+		dir_html(&"..".to_string()).unwrap();
+		dir_html(&PUBLIC_PFX.to_string()).unwrap();
 	}
 }
