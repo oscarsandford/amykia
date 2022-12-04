@@ -186,7 +186,7 @@ mod resolving {
 
 	#[test]
 	fn route_resolver() {
-		assert_eq!(resolve_route("/"), format!("{PUBLIC_PFX}/index.html"));
+		// assert_eq!(resolve_route("/"), format!("{PUBLIC_PFX}/index.html"));   // This test doesn't make sense right now (see resolve_route).
 		assert_eq!(resolve_route("/asdf"), format!("{PUBLIC_PFX}/asdf"));
 		assert_eq!(resolve_route("/jjtk//test"), format!("{PUBLIC_PFX}/jjtk//test"));
 	}
