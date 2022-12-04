@@ -1,0 +1,6 @@
+/target
+/tests
+/public
+todo.txt
+**/README.md
+*.sh

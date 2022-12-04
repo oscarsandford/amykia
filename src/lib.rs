@@ -101,7 +101,7 @@ fn resolve_route<'a>(
 	route: &'a str
 ) -> String {
 	match route.replace("%20", " ").as_str() {
-		"/" => format!("{PUBLIC_PFX}/index.html"),
+		// "/" => format!("{PUBLIC_PFX}/index.html"), // For now let us view the root dir.
 		route => format!("{PUBLIC_PFX}{route}"),
 	}
 }

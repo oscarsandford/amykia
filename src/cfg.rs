@@ -1,6 +1,12 @@
 pub const RECV_BUFFER_SIZE: usize = 1024;
-// Edit this prefix manually or via environment variable (think Docker).
-pub const PUBLIC_PFX: &str = "./public"; 
+//
+// The resource directory for debugging is the included `./public` folder. 
+// For a release build created with Docker, bind a specific folder to the 
+// `/public` container volume at runtime. For example:
+//
+//   docker run -d -p 5000:5000 --name amk -v /home/bob/stuff/things:/public amykia:latest
+//
+pub const PUBLIC_PFX: &str = if cfg!(debug_assertions) {"./public"} else {"/public"};
 
 pub const STYLES: &str = "
   :root {
